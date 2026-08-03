@@ -195,6 +195,13 @@ public abstract class AbstractDialect implements JdbcDialect {
                 Arrays.stream(conditionFields)
                         .map(f -> format("%s = :%s", quoteIdentifier(f), f))
                         .collect(Collectors.joining(" AND "));
+        if (selectExpressions.trim().isEmpty()) {
+            return "SELECT "
+                    + 1
+                    + " FROM "
+                    + quoteIdentifier(tableName)
+                    + (conditionFields.length > 0 ? " WHERE " + fieldExpressions : "");
+        }
         return "SELECT "
                 + selectExpressions
                 + " FROM "

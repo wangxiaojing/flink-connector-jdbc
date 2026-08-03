@@ -156,11 +156,25 @@ public abstract class AbstractDialectConverter implements JdbcDialectConverter {
                 // using decimal(20, 0) to support db type bigint unsigned, user should define
                 // decimal(20, 0) in SQL,
                 // but other precision like decimal(30, 0) can work too from lenient consideration.
-                return val ->
-                        val instanceof BigInteger
-                                ? DecimalData.fromBigDecimal(
-                                        new BigDecimal((BigInteger) val, 0), precision, scale)
-                                : DecimalData.fromBigDecimal((BigDecimal) val, precision, scale);
+                return val -> {
+                    if (val instanceof BigInteger) {
+                        BigDecimal bigDecimal = new BigDecimal((BigInteger) val, 0);
+                        // 如果精度大于38，转换为String
+                        if (precision > 38) {
+                            return StringData.fromString((String) val);
+                        } else {
+                            return DecimalData.fromBigDecimal(bigDecimal, precision, scale);
+                        }
+                    } else {
+                        BigDecimal bigDecimal = (BigDecimal) val;
+                        // 如果精度大于38，转换为String
+                        if (precision > 38) {
+                            return StringData.fromString((String) val);
+                        } else {
+                            return DecimalData.fromBigDecimal(bigDecimal, precision, scale);
+                        }
+                    }
+                };
             case DATE:
                 return val -> (int) (((Date) val).toLocalDate().toEpochDay());
             case TIME_WITHOUT_TIME_ZONE:
@@ -173,7 +187,19 @@ public abstract class AbstractDialectConverter implements JdbcDialectConverter {
                                 : TimestampData.fromTimestamp((Timestamp) val);
             case CHAR:
             case VARCHAR:
-                return val -> StringData.fromString((String) val);
+                return val -> {
+                    // 增强类型检查，处理 BigDecimal 和其他类型
+                    if (val instanceof String) {
+                        return StringData.fromString((String) val);
+                    } else if (val instanceof BigDecimal) {
+                        return StringData.fromString(((BigDecimal) val).toString());
+                    } else if (val instanceof BigInteger) {
+                        return StringData.fromString(new BigDecimal((BigInteger) val).toString());
+                    } else {
+                        // 其他类型都转为字符串
+                        return val != null ? StringData.fromString(val.toString()) : null;
+                    }
+                };
             case BINARY:
             case VARBINARY:
                 return val -> val;

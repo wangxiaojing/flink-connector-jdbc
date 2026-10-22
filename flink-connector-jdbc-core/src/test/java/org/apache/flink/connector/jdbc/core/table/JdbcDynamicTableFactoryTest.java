@@ -375,13 +375,35 @@ class JdbcDynamicTableFactoryTest {
         properties.put("scan.partition.column", "aaa");
         properties.put("scan.partition.chunk-size", "8096");
 
-        assertThatThrownBy(() -> createTableSource(SCHEMA, properties))
+        Map<String, String> unsupportedDialect = properties;
+        assertThatThrownBy(() -> createTableSource(SCHEMA, unsupportedDialect))
                 .hasStackTraceContaining(
                         "The dynamic-keyset strategy currently supports only MySQL.");
 
         properties.put("scan.partition.num", "4");
-        assertThatThrownBy(() -> createTableSource(SCHEMA, properties))
+        Map<String, String> incompatibleOptions = properties;
+        assertThatThrownBy(() -> createTableSource(SCHEMA, incompatibleOptions))
                 .hasStackTraceContaining("must not be combined with scan.partition.num");
+
+        properties = dynamicKeysetOptions();
+        properties.put("scan.partition.max-splits", "0");
+        Map<String, String> invalidMaxSplits = properties;
+        assertThatThrownBy(() -> createTableSource(SCHEMA, invalidMaxSplits))
+                .hasStackTraceContaining("scan.partition.max-splits must be greater than zero");
+
+        properties = dynamicKeysetOptions();
+        properties.put("scan.partition.discovery.max-retries", "-1");
+        Map<String, String> invalidRetries = properties;
+        assertThatThrownBy(() -> createTableSource(SCHEMA, invalidRetries))
+                .hasStackTraceContaining(
+                        "scan.partition.discovery.max-retries must not be negative");
+
+        properties = dynamicKeysetOptions();
+        properties.put("scan.partition.discovery.query-timeout", "0s");
+        Map<String, String> invalidTimeout = properties;
+        assertThatThrownBy(() -> createTableSource(SCHEMA, invalidTimeout))
+                .hasStackTraceContaining(
+                        "scan.partition.discovery.query-timeout must be greater than zero");
     }
 
     @Test
@@ -419,6 +441,14 @@ class JdbcDynamicTableFactoryTest {
         options.put("connector", "jdbc");
         options.put("url", "jdbc:derby:memory:mydb");
         options.put("table-name", "mytable");
+        return options;
+    }
+
+    private Map<String, String> dynamicKeysetOptions() {
+        Map<String, String> options = getAllOptions();
+        options.put("scan.partition.strategy", "dynamic-keyset");
+        options.put("scan.partition.column", "aaa");
+        options.put("scan.partition.chunk-size", "8096");
         return options;
     }
 }

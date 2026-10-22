@@ -161,6 +161,10 @@ public class JdbcDynamicTableSource
                                     dialect,
                                     partitionColumn,
                                     readOptions.getPartitionChunkSize().get(),
+                                    readOptions.getPartitionMaxSplits(),
+                                    readOptions.getPartitionDiscoveryMaxRetries(),
+                                    readOptions.getPartitionDiscoveryRetryBackoff(),
+                                    readOptions.getPartitionDiscoveryQueryTimeout(),
                                     resolvedPredicates,
                                     pushdownParams));
                     predicates.add(

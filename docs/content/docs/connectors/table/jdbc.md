@@ -221,6 +221,38 @@ Connector Options
       <td>Target row count used to discover each <code>dynamic-keyset</code> partition. It must be greater than zero.</td>
     </tr>
     <tr>
+      <td><h5>scan.partition.max-splits</h5></td>
+      <td>optional</td>
+      <td>no</td>
+      <td style="word-wrap: break-word;">100000</td>
+      <td>Integer</td>
+      <td>Maximum number of splits that <code>dynamic-keyset</code> discovery may create. Discovery fails before exceeding this limit.</td>
+    </tr>
+    <tr>
+      <td><h5>scan.partition.discovery.max-retries</h5></td>
+      <td>optional</td>
+      <td>no</td>
+      <td style="word-wrap: break-word;">3</td>
+      <td>Integer</td>
+      <td>Maximum retry count for each failed <code>dynamic-keyset</code> discovery query.</td>
+    </tr>
+    <tr>
+      <td><h5>scan.partition.discovery.retry-backoff</h5></td>
+      <td>optional</td>
+      <td>no</td>
+      <td style="word-wrap: break-word;">1s</td>
+      <td>Duration</td>
+      <td>Delay between retries of a failed <code>dynamic-keyset</code> discovery query.</td>
+    </tr>
+    <tr>
+      <td><h5>scan.partition.discovery.query-timeout</h5></td>
+      <td>optional</td>
+      <td>no</td>
+      <td style="word-wrap: break-word;">5min</td>
+      <td>Duration</td>
+      <td>JDBC query timeout applied to each <code>dynamic-keyset</code> discovery query.</td>
+    </tr>
+    <tr>
       <td><h5>scan.fetch-size</h5></td>
       <td>optional</td>
       <td>yes</td>
@@ -416,7 +448,11 @@ CREATE TABLE orders_snapshot (
   'table-name' = 'orders',
   'scan.partition.strategy' = 'dynamic-keyset',
   'scan.partition.column' = 'id',
-  'scan.partition.chunk-size' = '8096'
+  'scan.partition.chunk-size' = '8096',
+  'scan.partition.max-splits' = '100000',
+  'scan.partition.discovery.max-retries' = '3',
+  'scan.partition.discovery.retry-backoff' = '1s',
+  'scan.partition.discovery.query-timeout' = '5min'
 );
 ```
 
@@ -430,6 +466,8 @@ Requirements and limitations:
 - `scan.partition.chunk-size` controls boundary sampling, not the final Flink parallelism. The number of discovered ranges controls the number of input splits. Duplicate key values can make a range larger than the configured chunk size.
 - A query with a pushed-down global `LIMIT` runs as one input split so that the limit remains global and exact.
 - Boundary discovery is performed before the data splits run. A small chunk size creates more database queries and more Flink splits.
+- Discovery reuses one prepared statement for each of the minimum, boundary, and next-distinct-value queries. Failed queries are retried using the configured backoff and timeout. Progress is logged every 1,000 discovered splits.
+- `scan.partition.max-splits` bounds the eager split list held during planning. Increase the chunk size first when this guard is reached; raising the limit also increases JobManager memory and scheduling load.
 - Concurrent inserts, updates, or deletes can move rows across discovered ranges. This source does not establish one database-wide repeatable-read snapshot across connections. Run against a quiescent table, a database snapshot/read replica, or accept best-effort snapshot consistency.
 - On recovery, a bounded input split can be read again. A downstream append sink must tolerate duplicates; an idempotent/upsert sink should use a stable primary key.
 

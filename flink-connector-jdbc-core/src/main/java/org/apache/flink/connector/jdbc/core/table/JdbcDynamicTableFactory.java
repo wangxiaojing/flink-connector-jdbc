@@ -66,7 +66,11 @@ import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SC
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_FETCH_SIZE;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_CHUNK_SIZE;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_COLUMN;
+import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_DISCOVERY_MAX_RETRIES;
+import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT;
+import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_DISCOVERY_RETRY_BACKOFF;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_LOWER_BOUND;
+import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_MAX_SPLITS;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_NUM;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_STRATEGY;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_UPPER_BOUND;
@@ -203,7 +207,14 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
         if (partitionColumnName.isPresent()) {
             builder.setPartitionColumnName(partitionColumnName.get());
             if (partitionStrategy == JdbcScanPartitionStrategy.DYNAMIC_KEYSET) {
-                builder.setPartitionChunkSize(readableConfig.get(SCAN_PARTITION_CHUNK_SIZE));
+                builder.setPartitionChunkSize(readableConfig.get(SCAN_PARTITION_CHUNK_SIZE))
+                        .setPartitionMaxSplits(readableConfig.get(SCAN_PARTITION_MAX_SPLITS))
+                        .setPartitionDiscoveryMaxRetries(
+                                readableConfig.get(SCAN_PARTITION_DISCOVERY_MAX_RETRIES))
+                        .setPartitionDiscoveryRetryBackoff(
+                                readableConfig.get(SCAN_PARTITION_DISCOVERY_RETRY_BACKOFF))
+                        .setPartitionDiscoveryQueryTimeout(
+                                readableConfig.get(SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT));
             } else {
                 builder.setPartitionLowerBound(readableConfig.get(SCAN_PARTITION_LOWER_BOUND));
                 builder.setPartitionUpperBound(readableConfig.get(SCAN_PARTITION_UPPER_BOUND));
@@ -283,6 +294,10 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
         optionalOptions.add(SCAN_PARTITION_STRATEGY);
         optionalOptions.add(SCAN_PARTITION_COLUMN);
         optionalOptions.add(SCAN_PARTITION_CHUNK_SIZE);
+        optionalOptions.add(SCAN_PARTITION_MAX_SPLITS);
+        optionalOptions.add(SCAN_PARTITION_DISCOVERY_MAX_RETRIES);
+        optionalOptions.add(SCAN_PARTITION_DISCOVERY_RETRY_BACKOFF);
+        optionalOptions.add(SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT);
         optionalOptions.add(SCAN_PARTITION_LOWER_BOUND);
         optionalOptions.add(SCAN_PARTITION_UPPER_BOUND);
         optionalOptions.add(SCAN_PARTITION_NUM);
@@ -351,6 +366,23 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
             if (config.get(SCAN_PARTITION_CHUNK_SIZE) <= 0) {
                 throw new IllegalArgumentException(
                         "scan.partition.chunk-size must be greater than zero.");
+            }
+            if (config.get(SCAN_PARTITION_MAX_SPLITS) <= 0) {
+                throw new IllegalArgumentException(
+                        "scan.partition.max-splits must be greater than zero.");
+            }
+            if (config.get(SCAN_PARTITION_DISCOVERY_MAX_RETRIES) < 0) {
+                throw new IllegalArgumentException(
+                        "scan.partition.discovery.max-retries must not be negative.");
+            }
+            if (config.get(SCAN_PARTITION_DISCOVERY_RETRY_BACKOFF).isNegative()) {
+                throw new IllegalArgumentException(
+                        "scan.partition.discovery.retry-backoff must not be negative.");
+            }
+            if (config.get(SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT).isZero()
+                    || config.get(SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT).isNegative()) {
+                throw new IllegalArgumentException(
+                        "scan.partition.discovery.query-timeout must be greater than zero.");
             }
             JdbcDialect dialect =
                     JdbcFactoryLoader.loadDialect(

@@ -118,6 +118,34 @@ public class JdbcConnectorOptions {
                     .noDefaultValue()
                     .withDescription("The target number of rows in each dynamic-keyset partition.");
 
+    public static final ConfigOption<Integer> SCAN_PARTITION_MAX_SPLITS =
+            ConfigOptions.key("scan.partition.max-splits")
+                    .intType()
+                    .defaultValue(100_000)
+                    .withDescription(
+                            "The maximum number of splits that dynamic-keyset discovery may create.");
+
+    public static final ConfigOption<Integer> SCAN_PARTITION_DISCOVERY_MAX_RETRIES =
+            ConfigOptions.key("scan.partition.discovery.max-retries")
+                    .intType()
+                    .defaultValue(3)
+                    .withDescription(
+                            "The maximum number of retries for a failed dynamic-keyset discovery query.");
+
+    public static final ConfigOption<Duration> SCAN_PARTITION_DISCOVERY_RETRY_BACKOFF =
+            ConfigOptions.key("scan.partition.discovery.retry-backoff")
+                    .durationType()
+                    .defaultValue(Duration.ofSeconds(1))
+                    .withDescription(
+                            "The delay between retries of a dynamic-keyset discovery query.");
+
+    public static final ConfigOption<Duration> SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT =
+            ConfigOptions.key("scan.partition.discovery.query-timeout")
+                    .durationType()
+                    .defaultValue(Duration.ofMinutes(5))
+                    .withDescription(
+                            "The JDBC query timeout for each dynamic-keyset discovery query.");
+
     public static final ConfigOption<Integer> SCAN_FETCH_SIZE =
             ConfigOptions.key("scan.fetch-size")
                     .intType()

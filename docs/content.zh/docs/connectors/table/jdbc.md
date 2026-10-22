@@ -211,6 +211,34 @@ ON myTopic.key = MyUserTable.id;
       <td><code>dynamic-keyset</code> 发现每个分片边界时使用的目标行数，必须大于 0。</td>
     </tr>
     <tr>
+      <td><h5>scan.partition.max-splits</h5></td>
+      <td>可选</td>
+      <td style="word-wrap: break-word;">100000</td>
+      <td>Integer</td>
+      <td><code>dynamic-keyset</code> 最多允许发现的分片数；超过前会终止探查。</td>
+    </tr>
+    <tr>
+      <td><h5>scan.partition.discovery.max-retries</h5></td>
+      <td>可选</td>
+      <td style="word-wrap: break-word;">3</td>
+      <td>Integer</td>
+      <td>每条 <code>dynamic-keyset</code> 探查查询失败后的最大重试次数。</td>
+    </tr>
+    <tr>
+      <td><h5>scan.partition.discovery.retry-backoff</h5></td>
+      <td>可选</td>
+      <td style="word-wrap: break-word;">1s</td>
+      <td>Duration</td>
+      <td><code>dynamic-keyset</code> 探查查询重试之间的等待时间。</td>
+    </tr>
+    <tr>
+      <td><h5>scan.partition.discovery.query-timeout</h5></td>
+      <td>可选</td>
+      <td style="word-wrap: break-word;">5min</td>
+      <td>Duration</td>
+      <td>应用于每条 <code>dynamic-keyset</code> 探查查询的 JDBC 超时时间。</td>
+    </tr>
+    <tr>
       <td><h5>scan.fetch-size</h5></td>
       <td>可选</td>
       <td style="word-wrap: break-word;">0</td>
@@ -398,7 +426,11 @@ CREATE TABLE orders_snapshot (
   'table-name' = 'orders',
   'scan.partition.strategy' = 'dynamic-keyset',
   'scan.partition.column' = 'id',
-  'scan.partition.chunk-size' = '8096'
+  'scan.partition.chunk-size' = '8096',
+  'scan.partition.max-splits' = '100000',
+  'scan.partition.discovery.max-retries' = '3',
+  'scan.partition.discovery.retry-backoff' = '1s',
+  'scan.partition.discovery.query-timeout' = '5min'
 );
 ```
 
@@ -412,6 +444,8 @@ CREATE TABLE orders_snapshot (
 - `scan.partition.chunk-size` 控制边界探查的目标行数，不直接等于 Flink 并行度。最终发现的范围数决定输入分片数；大量重复键可能使单个分片超过目标行数。
 - SQL 存在可下推的全局 `LIMIT` 时会退化为一个输入分片，以保证 LIMIT 仍然是全局且精确的。
 - 所有边界在数据分片开始读取前发现。chunk size 越小，数据库探查查询和 Flink 分片越多。
+- 最小值、边界和下一个不同值三类探查查询分别复用一个 PreparedStatement。查询失败时按配置的退避和超时重试；每发现 1000 个分片记录一次进度日志。
+- `scan.partition.max-splits` 限制规划阶段保存在内存中的分片数量。触发限制时应优先增大 chunk size；直接提高上限也会增加 JobManager 内存和调度压力。
 - 并发插入、更新或删除可能使记录跨越已经发现的边界。本实现无法在多个 JDBC 连接之间建立全局一致的 repeatable-read 快照。应在静默窗口执行、读取数据库快照/只读副本，或接受尽力而为的快照一致性。
 - 故障恢复时，有界分片可能被重新读取。下游 append sink 需要容忍重复；幂等/upsert sink 应使用稳定主键。
 

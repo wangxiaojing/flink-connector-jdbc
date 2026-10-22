@@ -19,6 +19,7 @@
 package org.apache.flink.connector.jdbc.internal.options;
 
 import java.io.Serializable;
+import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -32,6 +33,10 @@ public class JdbcReadOptions implements Serializable {
     private final Integer numPartitions;
     private final JdbcScanPartitionStrategy partitionStrategy;
     private final Integer partitionChunkSize;
+    private final int partitionMaxSplits;
+    private final int partitionDiscoveryMaxRetries;
+    private final Duration partitionDiscoveryRetryBackoff;
+    private final Duration partitionDiscoveryQueryTimeout;
 
     private final int fetchSize;
     private final boolean autoCommit;
@@ -44,6 +49,10 @@ public class JdbcReadOptions implements Serializable {
             Integer numPartitions,
             JdbcScanPartitionStrategy partitionStrategy,
             Integer partitionChunkSize,
+            int partitionMaxSplits,
+            int partitionDiscoveryMaxRetries,
+            Duration partitionDiscoveryRetryBackoff,
+            Duration partitionDiscoveryQueryTimeout,
             int fetchSize,
             boolean autoCommit) {
         this.query = query;
@@ -53,6 +62,10 @@ public class JdbcReadOptions implements Serializable {
         this.numPartitions = numPartitions;
         this.partitionStrategy = partitionStrategy;
         this.partitionChunkSize = partitionChunkSize;
+        this.partitionMaxSplits = partitionMaxSplits;
+        this.partitionDiscoveryMaxRetries = partitionDiscoveryMaxRetries;
+        this.partitionDiscoveryRetryBackoff = partitionDiscoveryRetryBackoff;
+        this.partitionDiscoveryQueryTimeout = partitionDiscoveryQueryTimeout;
 
         this.fetchSize = fetchSize;
         this.autoCommit = autoCommit;
@@ -86,6 +99,22 @@ public class JdbcReadOptions implements Serializable {
         return Optional.ofNullable(partitionChunkSize);
     }
 
+    public int getPartitionMaxSplits() {
+        return partitionMaxSplits;
+    }
+
+    public int getPartitionDiscoveryMaxRetries() {
+        return partitionDiscoveryMaxRetries;
+    }
+
+    public Duration getPartitionDiscoveryRetryBackoff() {
+        return partitionDiscoveryRetryBackoff;
+    }
+
+    public Duration getPartitionDiscoveryQueryTimeout() {
+        return partitionDiscoveryQueryTimeout;
+    }
+
     public int getFetchSize() {
         return fetchSize;
     }
@@ -109,6 +138,12 @@ public class JdbcReadOptions implements Serializable {
                     && Objects.equals(numPartitions, options.numPartitions)
                     && Objects.equals(partitionStrategy, options.partitionStrategy)
                     && Objects.equals(partitionChunkSize, options.partitionChunkSize)
+                    && partitionMaxSplits == options.partitionMaxSplits
+                    && partitionDiscoveryMaxRetries == options.partitionDiscoveryMaxRetries
+                    && Objects.equals(
+                            partitionDiscoveryRetryBackoff, options.partitionDiscoveryRetryBackoff)
+                    && Objects.equals(
+                            partitionDiscoveryQueryTimeout, options.partitionDiscoveryQueryTimeout)
                     && Objects.equals(fetchSize, options.fetchSize)
                     && Objects.equals(autoCommit, options.autoCommit);
         } else {
@@ -126,6 +161,10 @@ public class JdbcReadOptions implements Serializable {
         protected JdbcScanPartitionStrategy partitionStrategy =
                 JdbcScanPartitionStrategy.FIXED_RANGE;
         protected Integer partitionChunkSize;
+        protected int partitionMaxSplits = 100_000;
+        protected int partitionDiscoveryMaxRetries = 3;
+        protected Duration partitionDiscoveryRetryBackoff = Duration.ofSeconds(1);
+        protected Duration partitionDiscoveryQueryTimeout = Duration.ofMinutes(5);
 
         protected int fetchSize = 0;
         protected boolean autoCommit = true;
@@ -173,6 +212,26 @@ public class JdbcReadOptions implements Serializable {
             return this;
         }
 
+        public Builder setPartitionMaxSplits(int partitionMaxSplits) {
+            this.partitionMaxSplits = partitionMaxSplits;
+            return this;
+        }
+
+        public Builder setPartitionDiscoveryMaxRetries(int partitionDiscoveryMaxRetries) {
+            this.partitionDiscoveryMaxRetries = partitionDiscoveryMaxRetries;
+            return this;
+        }
+
+        public Builder setPartitionDiscoveryRetryBackoff(Duration partitionDiscoveryRetryBackoff) {
+            this.partitionDiscoveryRetryBackoff = partitionDiscoveryRetryBackoff;
+            return this;
+        }
+
+        public Builder setPartitionDiscoveryQueryTimeout(Duration partitionDiscoveryQueryTimeout) {
+            this.partitionDiscoveryQueryTimeout = partitionDiscoveryQueryTimeout;
+            return this;
+        }
+
         /**
          * optional, the number of rows to fetch per round trip. default value is 0, according to
          * the jdbc api, 0 means that fetchSize hint will be ignored.
@@ -197,6 +256,10 @@ public class JdbcReadOptions implements Serializable {
                     numPartitions,
                     partitionStrategy,
                     partitionChunkSize,
+                    partitionMaxSplits,
+                    partitionDiscoveryMaxRetries,
+                    partitionDiscoveryRetryBackoff,
+                    partitionDiscoveryQueryTimeout,
                     fetchSize,
                     autoCommit);
         }

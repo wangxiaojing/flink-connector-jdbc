@@ -30,6 +30,8 @@ public class JdbcReadOptions implements Serializable {
     private final Long partitionLowerBound;
     private final Long partitionUpperBound;
     private final Integer numPartitions;
+    private final JdbcScanPartitionStrategy partitionStrategy;
+    private final Integer partitionChunkSize;
 
     private final int fetchSize;
     private final boolean autoCommit;
@@ -40,6 +42,8 @@ public class JdbcReadOptions implements Serializable {
             Long partitionLowerBound,
             Long partitionUpperBound,
             Integer numPartitions,
+            JdbcScanPartitionStrategy partitionStrategy,
+            Integer partitionChunkSize,
             int fetchSize,
             boolean autoCommit) {
         this.query = query;
@@ -47,6 +51,8 @@ public class JdbcReadOptions implements Serializable {
         this.partitionLowerBound = partitionLowerBound;
         this.partitionUpperBound = partitionUpperBound;
         this.numPartitions = numPartitions;
+        this.partitionStrategy = partitionStrategy;
+        this.partitionChunkSize = partitionChunkSize;
 
         this.fetchSize = fetchSize;
         this.autoCommit = autoCommit;
@@ -72,6 +78,14 @@ public class JdbcReadOptions implements Serializable {
         return Optional.ofNullable(numPartitions);
     }
 
+    public JdbcScanPartitionStrategy getPartitionStrategy() {
+        return partitionStrategy;
+    }
+
+    public Optional<Integer> getPartitionChunkSize() {
+        return Optional.ofNullable(partitionChunkSize);
+    }
+
     public int getFetchSize() {
         return fetchSize;
     }
@@ -93,6 +107,8 @@ public class JdbcReadOptions implements Serializable {
                     && Objects.equals(partitionLowerBound, options.partitionLowerBound)
                     && Objects.equals(partitionUpperBound, options.partitionUpperBound)
                     && Objects.equals(numPartitions, options.numPartitions)
+                    && Objects.equals(partitionStrategy, options.partitionStrategy)
+                    && Objects.equals(partitionChunkSize, options.partitionChunkSize)
                     && Objects.equals(fetchSize, options.fetchSize)
                     && Objects.equals(autoCommit, options.autoCommit);
         } else {
@@ -107,6 +123,9 @@ public class JdbcReadOptions implements Serializable {
         protected Long partitionLowerBound;
         protected Long partitionUpperBound;
         protected Integer numPartitions;
+        protected JdbcScanPartitionStrategy partitionStrategy =
+                JdbcScanPartitionStrategy.FIXED_RANGE;
+        protected Integer partitionChunkSize;
 
         protected int fetchSize = 0;
         protected boolean autoCommit = true;
@@ -144,6 +163,16 @@ public class JdbcReadOptions implements Serializable {
             return this;
         }
 
+        public Builder setPartitionStrategy(JdbcScanPartitionStrategy partitionStrategy) {
+            this.partitionStrategy = partitionStrategy;
+            return this;
+        }
+
+        public Builder setPartitionChunkSize(int partitionChunkSize) {
+            this.partitionChunkSize = partitionChunkSize;
+            return this;
+        }
+
         /**
          * optional, the number of rows to fetch per round trip. default value is 0, according to
          * the jdbc api, 0 means that fetchSize hint will be ignored.
@@ -166,6 +195,8 @@ public class JdbcReadOptions implements Serializable {
                     partitionLowerBound,
                     partitionUpperBound,
                     numPartitions,
+                    partitionStrategy,
+                    partitionChunkSize,
                     fetchSize,
                     autoCommit);
         }

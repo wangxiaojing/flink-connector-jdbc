@@ -30,6 +30,7 @@ import org.apache.flink.connector.jdbc.core.table.source.JdbcDynamicTableSource;
 import org.apache.flink.connector.jdbc.internal.options.InternalJdbcConnectionOptions;
 import org.apache.flink.connector.jdbc.internal.options.JdbcDmlOptions;
 import org.apache.flink.connector.jdbc.internal.options.JdbcReadOptions;
+import org.apache.flink.connector.jdbc.internal.options.JdbcScanPartitionStrategy;
 import org.apache.flink.table.connector.sink.DynamicTableSink;
 import org.apache.flink.table.connector.source.DynamicTableSource;
 import org.apache.flink.table.connector.source.lookup.LookupOptions;
@@ -63,9 +64,11 @@ import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.MA
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.PASSWORD;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_AUTO_COMMIT;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_FETCH_SIZE;
+import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_CHUNK_SIZE;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_COLUMN;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_LOWER_BOUND;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_NUM;
+import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_STRATEGY;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_UPPER_BOUND;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SINK_BUFFER_FLUSH_INTERVAL;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SINK_BUFFER_FLUSH_MAX_ROWS;
@@ -119,6 +122,7 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
 
         helper.validate();
         validateConfigOptions(config, context.getClassLoader());
+        validateDynamicPartitionColumn(config, context.getPhysicalRowDataType());
         validateDataTypeWithJdbcDialect(
                 context.getPhysicalRowDataType(),
                 config.get(URL),
@@ -131,6 +135,32 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
                 getLookupCache(config),
                 helper.getOptions().get(FILTER_HANDLING_POLICY),
                 context.getPhysicalRowDataType());
+    }
+
+    private static void validateDynamicPartitionColumn(
+            ReadableConfig config, DataType physicalRowDataType) {
+        if (JdbcScanPartitionStrategy.fromOption(config.get(SCAN_PARTITION_STRATEGY))
+                != JdbcScanPartitionStrategy.DYNAMIC_KEYSET) {
+            return;
+        }
+
+        String partitionColumn = config.get(SCAN_PARTITION_COLUMN);
+        int fieldIndex = DataType.getFieldNames(physicalRowDataType).indexOf(partitionColumn);
+        if (fieldIndex < 0) {
+            throw new IllegalArgumentException(
+                    "Dynamic partition column '"
+                            + partitionColumn
+                            + "' does not exist in the physical table schema.");
+        }
+        if (DataType.getFieldDataTypes(physicalRowDataType)
+                .get(fieldIndex)
+                .getLogicalType()
+                .isNullable()) {
+            throw new IllegalArgumentException(
+                    "Dynamic partition column '"
+                            + partitionColumn
+                            + "' must be declared NOT NULL.");
+        }
     }
 
     private static void validateDataTypeWithJdbcDialect(
@@ -166,12 +196,19 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
     private JdbcReadOptions getJdbcReadOptions(ReadableConfig readableConfig) {
         final Optional<String> partitionColumnName =
                 readableConfig.getOptional(SCAN_PARTITION_COLUMN);
-        final JdbcReadOptions.Builder builder = JdbcReadOptions.builder();
+        final JdbcScanPartitionStrategy partitionStrategy =
+                JdbcScanPartitionStrategy.fromOption(readableConfig.get(SCAN_PARTITION_STRATEGY));
+        final JdbcReadOptions.Builder builder =
+                JdbcReadOptions.builder().setPartitionStrategy(partitionStrategy);
         if (partitionColumnName.isPresent()) {
             builder.setPartitionColumnName(partitionColumnName.get());
-            builder.setPartitionLowerBound(readableConfig.get(SCAN_PARTITION_LOWER_BOUND));
-            builder.setPartitionUpperBound(readableConfig.get(SCAN_PARTITION_UPPER_BOUND));
-            builder.setNumPartitions(readableConfig.get(SCAN_PARTITION_NUM));
+            if (partitionStrategy == JdbcScanPartitionStrategy.DYNAMIC_KEYSET) {
+                builder.setPartitionChunkSize(readableConfig.get(SCAN_PARTITION_CHUNK_SIZE));
+            } else {
+                builder.setPartitionLowerBound(readableConfig.get(SCAN_PARTITION_LOWER_BOUND));
+                builder.setPartitionUpperBound(readableConfig.get(SCAN_PARTITION_UPPER_BOUND));
+                builder.setNumPartitions(readableConfig.get(SCAN_PARTITION_NUM));
+            }
         }
         readableConfig.getOptional(SCAN_FETCH_SIZE).ifPresent(builder::setFetchSize);
         builder.setAutoCommit(readableConfig.get(SCAN_AUTO_COMMIT));
@@ -243,7 +280,9 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
         optionalOptions.add(COMPATIBLE_MODE);
         optionalOptions.add(USERNAME);
         optionalOptions.add(PASSWORD);
+        optionalOptions.add(SCAN_PARTITION_STRATEGY);
         optionalOptions.add(SCAN_PARTITION_COLUMN);
+        optionalOptions.add(SCAN_PARTITION_CHUNK_SIZE);
         optionalOptions.add(SCAN_PARTITION_LOWER_BOUND);
         optionalOptions.add(SCAN_PARTITION_UPPER_BOUND);
         optionalOptions.add(SCAN_PARTITION_NUM);
@@ -292,27 +331,60 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
 
         checkAllOrNone(config, new ConfigOption[] {USERNAME, PASSWORD});
 
-        checkAllOrNone(
-                config,
-                new ConfigOption[] {
-                    SCAN_PARTITION_COLUMN,
-                    SCAN_PARTITION_NUM,
-                    SCAN_PARTITION_LOWER_BOUND,
-                    SCAN_PARTITION_UPPER_BOUND
-                });
-
-        if (config.getOptional(SCAN_PARTITION_LOWER_BOUND).isPresent()
-                && config.getOptional(SCAN_PARTITION_UPPER_BOUND).isPresent()) {
-            long lowerBound = config.get(SCAN_PARTITION_LOWER_BOUND);
-            long upperBound = config.get(SCAN_PARTITION_UPPER_BOUND);
-            if (lowerBound > upperBound) {
+        JdbcScanPartitionStrategy partitionStrategy =
+                JdbcScanPartitionStrategy.fromOption(config.get(SCAN_PARTITION_STRATEGY));
+        if (partitionStrategy == JdbcScanPartitionStrategy.DYNAMIC_KEYSET) {
+            if (!config.getOptional(SCAN_PARTITION_COLUMN).isPresent()
+                    || !config.getOptional(SCAN_PARTITION_CHUNK_SIZE).isPresent()) {
                 throw new IllegalArgumentException(
-                        String.format(
-                                "'%s'='%s' must not be larger than '%s'='%s'.",
-                                SCAN_PARTITION_LOWER_BOUND.key(),
-                                lowerBound,
-                                SCAN_PARTITION_UPPER_BOUND.key(),
-                                upperBound));
+                        "The dynamic-keyset strategy requires scan.partition.column and "
+                                + "scan.partition.chunk-size.");
+            }
+            if (config.getOptional(SCAN_PARTITION_NUM).isPresent()
+                    || config.getOptional(SCAN_PARTITION_LOWER_BOUND).isPresent()
+                    || config.getOptional(SCAN_PARTITION_UPPER_BOUND).isPresent()) {
+                throw new IllegalArgumentException(
+                        "The dynamic-keyset strategy must not be combined with "
+                                + "scan.partition.num, scan.partition.lower-bound or "
+                                + "scan.partition.upper-bound.");
+            }
+            if (config.get(SCAN_PARTITION_CHUNK_SIZE) <= 0) {
+                throw new IllegalArgumentException(
+                        "scan.partition.chunk-size must be greater than zero.");
+            }
+            JdbcDialect dialect =
+                    JdbcFactoryLoader.loadDialect(
+                            jdbcUrl, classLoader, config.get(COMPATIBLE_MODE));
+            if (!"MySQL".equals(dialect.dialectName())) {
+                throw new IllegalArgumentException(
+                        "The dynamic-keyset strategy currently supports only MySQL.");
+            }
+        } else {
+            checkAllOrNone(
+                    config,
+                    new ConfigOption[] {
+                        SCAN_PARTITION_COLUMN,
+                        SCAN_PARTITION_NUM,
+                        SCAN_PARTITION_LOWER_BOUND,
+                        SCAN_PARTITION_UPPER_BOUND
+                    });
+            if (config.getOptional(SCAN_PARTITION_CHUNK_SIZE).isPresent()) {
+                throw new IllegalArgumentException(
+                        "scan.partition.chunk-size is only valid with dynamic-keyset strategy.");
+            }
+            if (config.getOptional(SCAN_PARTITION_LOWER_BOUND).isPresent()
+                    && config.getOptional(SCAN_PARTITION_UPPER_BOUND).isPresent()) {
+                long lowerBound = config.get(SCAN_PARTITION_LOWER_BOUND);
+                long upperBound = config.get(SCAN_PARTITION_UPPER_BOUND);
+                if (lowerBound > upperBound) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "'%s'='%s' must not be larger than '%s'='%s'.",
+                                    SCAN_PARTITION_LOWER_BOUND.key(),
+                                    lowerBound,
+                                    SCAN_PARTITION_UPPER_BOUND.key(),
+                                    upperBound));
+                }
             }
         }
 

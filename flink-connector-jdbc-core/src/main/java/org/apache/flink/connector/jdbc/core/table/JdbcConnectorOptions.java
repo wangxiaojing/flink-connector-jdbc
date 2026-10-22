@@ -80,6 +80,14 @@ public class JdbcConnectorOptions {
     // Scan options
     // -----------------------------------------------------------------------------------------
 
+    public static final ConfigOption<String> SCAN_PARTITION_STRATEGY =
+            ConfigOptions.key("scan.partition.strategy")
+                    .stringType()
+                    .defaultValue("fixed-range")
+                    .withDescription(
+                            "Partition strategy for bounded scans. Supported values are "
+                                    + "fixed-range and dynamic-keyset.");
+
     public static final ConfigOption<String> SCAN_PARTITION_COLUMN =
             ConfigOptions.key("scan.partition.column")
                     .stringType()
@@ -103,6 +111,12 @@ public class JdbcConnectorOptions {
                     .longType()
                     .noDefaultValue()
                     .withDescription("The largest value of the last partition.");
+
+    public static final ConfigOption<Integer> SCAN_PARTITION_CHUNK_SIZE =
+            ConfigOptions.key("scan.partition.chunk-size")
+                    .intType()
+                    .noDefaultValue()
+                    .withDescription("The target number of rows in each dynamic-keyset partition.");
 
     public static final ConfigOption<Integer> SCAN_FETCH_SIZE =
             ConfigOptions.key("scan.fetch-size")

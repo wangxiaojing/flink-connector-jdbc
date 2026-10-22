@@ -23,6 +23,7 @@ import org.apache.flink.connector.jdbc.core.database.dialect.JdbcDialect;
 import org.apache.flink.connector.jdbc.core.table.FilterHandlingPolicy;
 import org.apache.flink.connector.jdbc.internal.options.InternalJdbcConnectionOptions;
 import org.apache.flink.connector.jdbc.internal.options.JdbcReadOptions;
+import org.apache.flink.connector.jdbc.internal.options.JdbcScanPartitionStrategy;
 import org.apache.flink.connector.jdbc.split.CompositeJdbcParameterValuesProvider;
 import org.apache.flink.connector.jdbc.split.JdbcGenericParameterValuesProvider;
 import org.apache.flink.connector.jdbc.split.JdbcNumericBetweenParametersProvider;
@@ -147,22 +148,42 @@ public class JdbcDynamicTableSource
         final List<String> predicates = new ArrayList<String>();
 
         if (readOptions.getPartitionColumnName().isPresent()) {
-            long lowerBound = readOptions.getPartitionLowerBound().get();
-            long upperBound = readOptions.getPartitionUpperBound().get();
-            int numPartitions = readOptions.getNumPartitions().get();
+            String partitionColumn = readOptions.getPartitionColumnName().get();
+            if (readOptions.getPartitionStrategy() == JdbcScanPartitionStrategy.DYNAMIC_KEYSET) {
+                if (limit >= 0) {
+                    // A global limit cannot be applied independently to parallel partitions.
+                    builder.setParametersProvider(
+                            new JdbcGenericParameterValuesProvider(replicatePushdownParamsForN(1)));
+                } else {
+                    builder.setParametersProvider(
+                            new JdbcDynamicKeysetParametersProvider(
+                                    options,
+                                    dialect,
+                                    partitionColumn,
+                                    readOptions.getPartitionChunkSize().get(),
+                                    resolvedPredicates,
+                                    pushdownParams));
+                    predicates.add(
+                            dialect.quoteIdentifier(partitionColumn)
+                                    + " >= ? AND (? IS NULL OR "
+                                    + dialect.quoteIdentifier(partitionColumn)
+                                    + " < ?)");
+                }
+            } else {
+                long lowerBound = readOptions.getPartitionLowerBound().get();
+                long upperBound = readOptions.getPartitionUpperBound().get();
+                int numPartitions = readOptions.getNumPartitions().get();
 
-            Serializable[][] allPushdownParams = replicatePushdownParamsForN(numPartitions);
-            JdbcParameterValuesProvider allParams =
-                    new CompositeJdbcParameterValuesProvider(
-                            new JdbcNumericBetweenParametersProvider(lowerBound, upperBound)
-                                    .ofBatchNum(numPartitions),
-                            new JdbcGenericParameterValuesProvider(allPushdownParams));
+                Serializable[][] allPushdownParams = replicatePushdownParamsForN(numPartitions);
+                JdbcParameterValuesProvider allParams =
+                        new CompositeJdbcParameterValuesProvider(
+                                new JdbcNumericBetweenParametersProvider(lowerBound, upperBound)
+                                        .ofBatchNum(numPartitions),
+                                new JdbcGenericParameterValuesProvider(allPushdownParams));
 
-            builder.setParametersProvider(allParams);
-
-            predicates.add(
-                    dialect.quoteIdentifier(readOptions.getPartitionColumnName().get())
-                            + " BETWEEN ? AND ?");
+                builder.setParametersProvider(allParams);
+                predicates.add(dialect.quoteIdentifier(partitionColumn) + " BETWEEN ? AND ?");
+            }
         } else {
             builder.setParametersProvider(
                     new JdbcGenericParameterValuesProvider(replicatePushdownParamsForN(1)));

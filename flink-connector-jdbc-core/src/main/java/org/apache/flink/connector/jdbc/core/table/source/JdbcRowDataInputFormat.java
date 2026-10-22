@@ -64,6 +64,7 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
     private int fetchSize;
     private Boolean autoCommit;
     private Object[][] parameterValues;
+    private JdbcParameterValuesProvider parameterValuesProvider;
     private String queryTemplate;
     private int resultSetType;
     private int resultSetConcurrency;
@@ -79,6 +80,7 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
             int fetchSize,
             Boolean autoCommit,
             Object[][] parameterValues,
+            JdbcParameterValuesProvider parameterValuesProvider,
             String queryTemplate,
             int resultSetType,
             int resultSetConcurrency,
@@ -88,6 +90,7 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
         this.fetchSize = fetchSize;
         this.autoCommit = autoCommit;
         this.parameterValues = parameterValues;
+        this.parameterValuesProvider = parameterValuesProvider;
         this.queryTemplate = queryTemplate;
         this.resultSetType = resultSetType;
         this.resultSetConcurrency = resultSetConcurrency;
@@ -153,9 +156,15 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
     @Override
     public void open(InputSplit inputSplit) throws IOException {
         try {
-            if (inputSplit != null && parameterValues != null) {
-                for (int i = 0; i < parameterValues[inputSplit.getSplitNumber()].length; i++) {
-                    Object param = parameterValues[inputSplit.getSplitNumber()][i];
+            Object[] splitParameters = null;
+            if (inputSplit instanceof JdbcParameterValuesInputSplit) {
+                splitParameters = ((JdbcParameterValuesInputSplit) inputSplit).getParameterValues();
+            } else if (inputSplit != null && parameterValues != null) {
+                splitParameters = parameterValues[inputSplit.getSplitNumber()];
+            }
+            if (splitParameters != null) {
+                for (int i = 0; i < splitParameters.length; i++) {
+                    Object param = splitParameters[i];
                     if (param instanceof String) {
                         statement.setString(i + 1, (String) param);
                     } else if (param instanceof Long) {
@@ -182,6 +191,8 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
                         statement.setTimestamp(i + 1, (Timestamp) param);
                     } else if (param instanceof Array) {
                         statement.setArray(i + 1, (Array) param);
+                    } else if (param == null) {
+                        statement.setObject(i + 1, null);
                     } else {
                         // extends with other types if needed
                         throw new IllegalArgumentException(
@@ -197,8 +208,7 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
                             String.format(
                                     "Executing '%s' with parameters %s",
                                     queryTemplate,
-                                    Arrays.deepToString(
-                                            parameterValues[inputSplit.getSplitNumber()])));
+                                    Arrays.deepToString(new Object[] {splitParameters})));
                 }
             }
             resultSet = statement.executeQuery();
@@ -272,14 +282,20 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
 
     @Override
     public InputSplit[] createInputSplits(int minNumSplits) throws IOException {
-        if (parameterValues == null) {
+        Object[][] splitParameterValues = parameterValues;
+        if (splitParameterValues == null && parameterValuesProvider != null) {
+            splitParameterValues = parameterValuesProvider.getParameterValues();
+        }
+        if (splitParameterValues == null) {
             return new GenericInputSplit[] {new GenericInputSplit(0, 1)};
         }
-        GenericInputSplit[] ret = new GenericInputSplit[parameterValues.length];
-        for (int i = 0; i < ret.length; i++) {
-            ret[i] = new GenericInputSplit(i, ret.length);
+        JdbcParameterValuesInputSplit[] splits =
+                new JdbcParameterValuesInputSplit[splitParameterValues.length];
+        for (int i = 0; i < splits.length; i++) {
+            splits[i] =
+                    new JdbcParameterValuesInputSplit(i, splits.length, splitParameterValues[i]);
         }
-        return ret;
+        return splits;
     }
 
     @Override
@@ -302,6 +318,7 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
         private int fetchSize;
         private Boolean autoCommit;
         private Object[][] parameterValues;
+        private JdbcParameterValuesProvider parameterValuesProvider;
         private String queryTemplate;
         private JdbcDialectConverter rowConverter;
         private TypeInformation<RowData> rowDataTypeInfo;
@@ -338,7 +355,7 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
         }
 
         public Builder setParametersProvider(JdbcParameterValuesProvider parameterValuesProvider) {
-            this.parameterValues = parameterValuesProvider.getParameterValues();
+            this.parameterValuesProvider = parameterValuesProvider;
             return this;
         }
 
@@ -383,7 +400,7 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
             if (this.rowConverter == null) {
                 throw new NullPointerException("No row converter supplied");
             }
-            if (this.parameterValues == null) {
+            if (this.parameterValues == null && this.parameterValuesProvider == null) {
                 LOG.debug("No input splitting configured (data will be read with parallelism 1).");
             }
             return new JdbcRowDataInputFormat(
@@ -391,6 +408,7 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
                     this.fetchSize,
                     this.autoCommit,
                     this.parameterValues,
+                    this.parameterValuesProvider,
                     this.queryTemplate,
                     this.resultSetType,
                     this.resultSetConcurrency,

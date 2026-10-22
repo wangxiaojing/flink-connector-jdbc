@@ -173,6 +173,14 @@ Connector Options
       <td>Maximum timeout between retries. The timeout should be in second granularity and shouldn't be smaller than 1 second.</td>
     </tr>
     <tr>
+      <td><h5>scan.partition.strategy</h5></td>
+      <td>optional</td>
+      <td>no</td>
+      <td style="word-wrap: break-word;">fixed-range</td>
+      <td>String</td>
+      <td>Partition strategy for bounded scans. Supported values are <code>fixed-range</code> and <code>dynamic-keyset</code>.</td>
+    </tr>
+    <tr>
       <td><h5>scan.partition.column</h5></td>
       <td>optional</td>
       <td>no</td>
@@ -203,6 +211,14 @@ Connector Options
       <td style="word-wrap: break-word;">(none)</td>
       <td>Integer</td>
       <td>The largest value of the last partition.</td>
+    </tr>
+    <tr>
+      <td><h5>scan.partition.chunk-size</h5></td>
+      <td>optional</td>
+      <td>no</td>
+      <td style="word-wrap: break-word;">(none)</td>
+      <td>Integer</td>
+      <td>Target row count used to discover each <code>dynamic-keyset</code> partition. It must be greater than zero.</td>
     </tr>
     <tr>
       <td><h5>scan.fetch-size</h5></td>
@@ -386,6 +402,36 @@ The `scan.partition.column` must be a numeric, date, or timestamp column from th
 - `scan.partition.num`: The number of partitions.
 - `scan.partition.lower-bound`: The smallest value of the first partition.
 - `scan.partition.upper-bound`: The largest value of the last partition.
+
+For sparse MySQL keys, or when a pushed-down filter leaves large gaps in the key space, use `dynamic-keyset`. It discovers boundaries from rows that actually match the accepted filters instead of dividing the numeric distance between lower and upper bounds. Do not set `scan.partition.num`, `scan.partition.lower-bound`, or `scan.partition.upper-bound` in this mode.
+
+```sql
+CREATE TABLE orders_snapshot (
+  id BIGINT NOT NULL,
+  status STRING,
+  ...
+) WITH (
+  'connector' = 'jdbc',
+  'url' = 'jdbc:mysql://mysql-host:3306/app',
+  'table-name' = 'orders',
+  'scan.partition.strategy' = 'dynamic-keyset',
+  'scan.partition.column' = 'id',
+  'scan.partition.chunk-size' = '8096'
+);
+```
+
+The strategy runs a bounded snapshot only. It neither reads a binlog nor captures changes made after a split has been read. Before data tasks start, the source executes `MIN(key)` and repeated ordered, limited boundary queries. The generated half-open ranges use `key >= start AND key < end`; the last range has no upper bound. Accepted filter pushdown predicates are included in both boundary discovery and data queries.
+
+Requirements and limitations:
+
+- Currently only the MySQL dialect is accepted.
+- The partition column must be declared `NOT NULL` and must also be non-null in the physical table. Null keys are outside every generated range.
+- Use an indexed, stable, orderable column. A primary key or unique key is recommended. Without a suitable index, boundary discovery can repeatedly scan and sort the table.
+- `scan.partition.chunk-size` controls boundary sampling, not the final Flink parallelism. The number of discovered ranges controls the number of input splits. Duplicate key values can make a range larger than the configured chunk size.
+- A query with a pushed-down global `LIMIT` runs as one input split so that the limit remains global and exact.
+- Boundary discovery is performed before the data splits run. A small chunk size creates more database queries and more Flink splits.
+- Concurrent inserts, updates, or deletes can move rows across discovered ranges. This source does not establish one database-wide repeatable-read snapshot across connections. Run against a quiescent table, a database snapshot/read replica, or accept best-effort snapshot consistency.
+- On recovery, a bounded input split can be read again. A downstream append sink must tolerate duplicates; an idempotent/upsert sink should use a stable primary key.
 
 ### Lookup Cache
 

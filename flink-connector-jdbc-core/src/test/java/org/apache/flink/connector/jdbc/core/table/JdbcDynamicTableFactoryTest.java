@@ -369,6 +369,22 @@ class JdbcDynamicTableFactoryTest {
     }
 
     @Test
+    void testDynamicKeysetValidation() {
+        Map<String, String> properties = getAllOptions();
+        properties.put("scan.partition.strategy", "dynamic-keyset");
+        properties.put("scan.partition.column", "aaa");
+        properties.put("scan.partition.chunk-size", "8096");
+
+        assertThatThrownBy(() -> createTableSource(SCHEMA, properties))
+                .hasStackTraceContaining(
+                        "The dynamic-keyset strategy currently supports only MySQL.");
+
+        properties.put("scan.partition.num", "4");
+        assertThatThrownBy(() -> createTableSource(SCHEMA, properties))
+                .hasStackTraceContaining("must not be combined with scan.partition.num");
+    }
+
+    @Test
     void testJdbcLookupPropertiesWithExcludeEmptyResult() {
         Map<String, String> properties = getAllOptions();
         properties.put("lookup.cache.max-rows", "1000");

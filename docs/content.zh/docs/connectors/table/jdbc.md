@@ -169,6 +169,13 @@ ON myTopic.key = MyUserTable.id;
       <td>最大重试超时时间，以秒为单位且不应该小于 1 秒。</td>
     </tr>
     <tr>
+      <td><h5>scan.partition.strategy</h5></td>
+      <td>可选</td>
+      <td style="word-wrap: break-word;">fixed-range</td>
+      <td>String</td>
+      <td>有界读取的分片策略。支持 <code>fixed-range</code> 和 <code>dynamic-keyset</code>。</td>
+    </tr>
+    <tr>
       <td><h5>scan.partition.column</h5></td>
       <td>可选</td>
       <td style="word-wrap: break-word;">(none)</td>
@@ -195,6 +202,13 @@ ON myTopic.key = MyUserTable.id;
       <td style="word-wrap: break-word;">(none)</td>
       <td>Integer</td>
       <td>最后一个分区的最大值。</td>
+    </tr>
+    <tr>
+      <td><h5>scan.partition.chunk-size</h5></td>
+      <td>可选</td>
+      <td style="word-wrap: break-word;">(none)</td>
+      <td>Integer</td>
+      <td><code>dynamic-keyset</code> 发现每个分片边界时使用的目标行数，必须大于 0。</td>
     </tr>
     <tr>
       <td><h5>scan.fetch-size</h5></td>
@@ -370,6 +384,36 @@ ON myTopic.key = MyUserTable.id;
 - `scan.partition.num`：分区数。
 - `scan.partition.lower-bound`：第一个分区的最小值。
 - `scan.partition.upper-bound`：最后一个分区的最大值。
+
+当 MySQL 分片键非常稀疏，或下推的过滤条件使键空间出现大量空洞时，可以使用 `dynamic-keyset`。它按照过滤后真实存在的数据发现边界，不再按 lower/upper 的数值距离均分。该模式不能再配置 `scan.partition.num`、`scan.partition.lower-bound` 和 `scan.partition.upper-bound`。
+
+```sql
+CREATE TABLE orders_snapshot (
+  id BIGINT NOT NULL,
+  status STRING,
+  ...
+) WITH (
+  'connector' = 'jdbc',
+  'url' = 'jdbc:mysql://mysql-host:3306/app',
+  'table-name' = 'orders',
+  'scan.partition.strategy' = 'dynamic-keyset',
+  'scan.partition.column' = 'id',
+  'scan.partition.chunk-size' = '8096'
+);
+```
+
+该策略只执行有界历史快照，不读取 binlog，也不会持续捕获某个分片读取完成之后发生的变更。数据任务启动前，Source 会先执行 `MIN(key)`，然后重复执行带排序和 LIMIT 的边界查询。数据分片使用 `key >= start AND key < end` 的左闭右开范围，最后一个分片没有上界。连接器已经接受并下推的过滤条件会同时用于边界探查和数据查询。
+
+要求与限制：
+
+- 当前只支持 MySQL 方言。
+- Flink DDL 中的分片列必须声明为 `NOT NULL`，物理表中也不能存在空键；空键不属于任何生成的范围。
+- 分片列应稳定、可排序并建立索引，推荐使用主键或唯一键。没有合适索引时，重复的边界查询可能反复扫描和排序表。
+- `scan.partition.chunk-size` 控制边界探查的目标行数，不直接等于 Flink 并行度。最终发现的范围数决定输入分片数；大量重复键可能使单个分片超过目标行数。
+- SQL 存在可下推的全局 `LIMIT` 时会退化为一个输入分片，以保证 LIMIT 仍然是全局且精确的。
+- 所有边界在数据分片开始读取前发现。chunk size 越小，数据库探查查询和 Flink 分片越多。
+- 并发插入、更新或删除可能使记录跨越已经发现的边界。本实现无法在多个 JDBC 连接之间建立全局一致的 repeatable-read 快照。应在静默窗口执行、读取数据库快照/只读副本，或接受尽力而为的快照一致性。
+- 故障恢复时，有界分片可能被重新读取。下游 append sink 需要容忍重复；幂等/upsert sink 应使用稳定主键。
 
 <a name="lookup-cache"></a>
 

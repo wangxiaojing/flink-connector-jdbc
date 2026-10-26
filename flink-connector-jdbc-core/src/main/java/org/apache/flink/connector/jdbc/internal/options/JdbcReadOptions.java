@@ -37,6 +37,7 @@ public class JdbcReadOptions implements Serializable {
     private final int partitionDiscoveryMaxRetries;
     private final Duration partitionDiscoveryRetryBackoff;
     private final Duration partitionDiscoveryQueryTimeout;
+    private final Duration partitionDiscoveryTotalTimeout;
 
     private final int fetchSize;
     private final boolean autoCommit;
@@ -53,6 +54,7 @@ public class JdbcReadOptions implements Serializable {
             int partitionDiscoveryMaxRetries,
             Duration partitionDiscoveryRetryBackoff,
             Duration partitionDiscoveryQueryTimeout,
+            Duration partitionDiscoveryTotalTimeout,
             int fetchSize,
             boolean autoCommit) {
         this.query = query;
@@ -66,6 +68,7 @@ public class JdbcReadOptions implements Serializable {
         this.partitionDiscoveryMaxRetries = partitionDiscoveryMaxRetries;
         this.partitionDiscoveryRetryBackoff = partitionDiscoveryRetryBackoff;
         this.partitionDiscoveryQueryTimeout = partitionDiscoveryQueryTimeout;
+        this.partitionDiscoveryTotalTimeout = partitionDiscoveryTotalTimeout;
 
         this.fetchSize = fetchSize;
         this.autoCommit = autoCommit;
@@ -115,6 +118,10 @@ public class JdbcReadOptions implements Serializable {
         return partitionDiscoveryQueryTimeout;
     }
 
+    public Duration getPartitionDiscoveryTotalTimeout() {
+        return partitionDiscoveryTotalTimeout;
+    }
+
     public int getFetchSize() {
         return fetchSize;
     }
@@ -144,6 +151,8 @@ public class JdbcReadOptions implements Serializable {
                             partitionDiscoveryRetryBackoff, options.partitionDiscoveryRetryBackoff)
                     && Objects.equals(
                             partitionDiscoveryQueryTimeout, options.partitionDiscoveryQueryTimeout)
+                    && Objects.equals(
+                            partitionDiscoveryTotalTimeout, options.partitionDiscoveryTotalTimeout)
                     && Objects.equals(fetchSize, options.fetchSize)
                     && Objects.equals(autoCommit, options.autoCommit);
         } else {
@@ -165,6 +174,7 @@ public class JdbcReadOptions implements Serializable {
         protected int partitionDiscoveryMaxRetries = 3;
         protected Duration partitionDiscoveryRetryBackoff = Duration.ofSeconds(1);
         protected Duration partitionDiscoveryQueryTimeout = Duration.ofMinutes(5);
+        protected Duration partitionDiscoveryTotalTimeout = Duration.ofMinutes(30);
 
         protected int fetchSize = 0;
         protected boolean autoCommit = true;
@@ -232,6 +242,11 @@ public class JdbcReadOptions implements Serializable {
             return this;
         }
 
+        public Builder setPartitionDiscoveryTotalTimeout(Duration partitionDiscoveryTotalTimeout) {
+            this.partitionDiscoveryTotalTimeout = partitionDiscoveryTotalTimeout;
+            return this;
+        }
+
         /**
          * optional, the number of rows to fetch per round trip. default value is 0, according to
          * the jdbc api, 0 means that fetchSize hint will be ignored.
@@ -260,6 +275,7 @@ public class JdbcReadOptions implements Serializable {
                     partitionDiscoveryMaxRetries,
                     partitionDiscoveryRetryBackoff,
                     partitionDiscoveryQueryTimeout,
+                    partitionDiscoveryTotalTimeout,
                     fetchSize,
                     autoCommit);
         }

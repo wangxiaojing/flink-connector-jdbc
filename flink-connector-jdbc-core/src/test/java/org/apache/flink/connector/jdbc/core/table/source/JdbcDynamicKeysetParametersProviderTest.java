@@ -18,6 +18,7 @@
 
 package org.apache.flink.connector.jdbc.core.table.source;
 
+import org.apache.flink.connector.jdbc.datasource.connections.JdbcConnectionProvider;
 import org.apache.flink.connector.jdbc.derby.database.dialect.DerbyDialect;
 import org.apache.flink.connector.jdbc.internal.options.InternalJdbcConnectionOptions;
 
@@ -32,11 +33,16 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLSyntaxErrorException;
+import java.sql.SQLTimeoutException;
+import java.sql.SQLTransientException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -174,7 +180,8 @@ class JdbcDynamicKeysetParametersProviderTest {
                                                                     .getName()
                                                                     .equals("executeQuery")
                                                             && failFirstQuery.getAndSet(false)) {
-                                                        throw new SQLException("transient failure");
+                                                        throw new SQLTransientException(
+                                                                "transient failure");
                                                     }
                                                     try {
                                                         return statementMethod.invoke(
@@ -192,8 +199,115 @@ class JdbcDynamicKeysetParametersProviderTest {
 
         assertThat(provider.discoverParameterValues(instrumentedConnection)).hasDimensions(2, 4);
         assertThat(prepareCalls).hasValue(3);
-        assertThat(timeoutCalls).hasValue(3);
+        assertThat(timeoutCalls).hasValue(4);
         assertThat(failFirstQuery).isFalse();
+    }
+
+    @Test
+    void reconnectsAndResumesFromTheCurrentBoundary() throws Exception {
+        AtomicInteger connectionCount = new AtomicInteger();
+        AtomicInteger firstConnectionExecutions = new AtomicInteger();
+        AtomicReference<Connection> currentConnection = new AtomicReference<>();
+        JdbcConnectionProvider connectionProvider =
+                new JdbcConnectionProvider() {
+                    @Override
+                    public Connection getConnection() {
+                        return currentConnection.get();
+                    }
+
+                    @Override
+                    public boolean isConnectionValid() throws SQLException {
+                        Connection current = currentConnection.get();
+                        return current != null && !current.isClosed();
+                    }
+
+                    @Override
+                    public Connection getOrEstablishConnection() throws SQLException {
+                        if (isConnectionValid()) {
+                            return currentConnection.get();
+                        }
+                        Connection delegate = DriverManager.getConnection(URL);
+                        if (connectionCount.incrementAndGet() == 1) {
+                            delegate =
+                                    connectionFailingOnExecution(
+                                            delegate, firstConnectionExecutions, 3);
+                        }
+                        currentConnection.set(delegate);
+                        return delegate;
+                    }
+
+                    @Override
+                    public void closeConnection() {
+                        Connection current = currentConnection.getAndSet(null);
+                        if (current != null) {
+                            try {
+                                current.close();
+                            } catch (SQLException ignored) {
+                                // Test cleanup only.
+                            }
+                        }
+                    }
+
+                    @Override
+                    public Connection reestablishConnection() throws SQLException {
+                        closeConnection();
+                        return getOrEstablishConnection();
+                    }
+                };
+        JdbcDynamicKeysetParametersProvider provider =
+                provider(2, 100, 2, Duration.ofMinutes(5), "VALID");
+
+        try {
+            assertThat(provider.discoverParameterValues(connectionProvider))
+                    .isDeepEqualTo(
+                            new Serializable[][] {
+                                parameters(1L, 1000000000000L, 1000000000000L, "VALID"),
+                                parameters(1000000000000L, null, null, "VALID")
+                            });
+            assertThat(connectionCount).hasValue(2);
+            assertThat(firstConnectionExecutions).hasValue(3);
+        } finally {
+            connectionProvider.closeConnection();
+        }
+    }
+
+    @Test
+    void doesNotRetryNonTransientSqlFailures() {
+        AtomicInteger executions = new AtomicInteger();
+        Connection failingConnection =
+                connectionThrowingOnEveryExecution(
+                        connection,
+                        executions,
+                        () -> new SQLSyntaxErrorException("invalid discovery query", "42000"));
+        JdbcDynamicKeysetParametersProvider provider = provider(2, "VALID");
+
+        assertThatThrownBy(() -> provider.discoverParameterValues(failingConnection))
+                .isInstanceOf(SQLSyntaxErrorException.class);
+        assertThat(executions).hasValue(1);
+    }
+
+    @Test
+    void totalTimeoutIncludesRetryBackoff() {
+        AtomicInteger executions = new AtomicInteger();
+        Connection failingConnection =
+                connectionThrowingOnEveryExecution(
+                        connection,
+                        executions,
+                        () -> new SQLTransientException("retryable failure", "40001"));
+        JdbcDynamicKeysetParametersProvider provider =
+                provider(
+                        2,
+                        100,
+                        10,
+                        Duration.ofSeconds(1),
+                        Duration.ofMinutes(5),
+                        Duration.ofMillis(30),
+                        "VALID");
+
+        assertThatThrownBy(() -> provider.discoverParameterValues(failingConnection))
+                .isInstanceOf(SQLTimeoutException.class)
+                .hasMessageContaining("scan.partition.discovery.total-timeout=PT0.03S");
+        assertThat(executions).hasValue(1);
     }
 
     private JdbcDynamicKeysetParametersProvider provider(int chunkSize, String status) {
@@ -202,6 +316,24 @@ class JdbcDynamicKeysetParametersProviderTest {
 
     private JdbcDynamicKeysetParametersProvider provider(
             int chunkSize, int maxSplits, int maxRetries, Duration queryTimeout, String status) {
+        return provider(
+                chunkSize,
+                maxSplits,
+                maxRetries,
+                Duration.ZERO,
+                queryTimeout,
+                Duration.ofMinutes(30),
+                status);
+    }
+
+    private JdbcDynamicKeysetParametersProvider provider(
+            int chunkSize,
+            int maxSplits,
+            int maxRetries,
+            Duration retryBackoff,
+            Duration queryTimeout,
+            Duration totalTimeout,
+            String status) {
         return new JdbcDynamicKeysetParametersProvider(
                 connectionOptions,
                 new DerbyDialect(),
@@ -209,10 +341,68 @@ class JdbcDynamicKeysetParametersProviderTest {
                 chunkSize,
                 maxSplits,
                 maxRetries,
-                Duration.ZERO,
+                retryBackoff,
                 queryTimeout,
+                totalTimeout,
                 Collections.singletonList("STATUS = ?"),
                 new Serializable[] {status});
+    }
+
+    private Connection connectionFailingOnExecution(
+            Connection delegate, AtomicInteger executions, int failureExecution) {
+        return connectionWithStatementFailure(
+                delegate,
+                executions,
+                () ->
+                        executions.get() == failureExecution
+                                ? new SQLRecoverableException("connection lost", "08006")
+                                : null);
+    }
+
+    private Connection connectionThrowingOnEveryExecution(
+            Connection delegate,
+            AtomicInteger executions,
+            java.util.function.Supplier<SQLException> failureSupplier) {
+        return connectionWithStatementFailure(delegate, executions, failureSupplier);
+    }
+
+    private Connection connectionWithStatementFailure(
+            Connection delegate,
+            AtomicInteger executions,
+            java.util.function.Supplier<SQLException> failureSupplier) {
+        return (Connection)
+                Proxy.newProxyInstance(
+                        getClass().getClassLoader(),
+                        new Class<?>[] {Connection.class},
+                        (proxy, method, args) -> {
+                            try {
+                                Object result = method.invoke(delegate, args);
+                                if (!method.getName().equals("prepareStatement")) {
+                                    return result;
+                                }
+                                PreparedStatement statement = (PreparedStatement) result;
+                                return Proxy.newProxyInstance(
+                                        getClass().getClassLoader(),
+                                        new Class<?>[] {PreparedStatement.class},
+                                        (statementProxy, statementMethod, statementArgs) -> {
+                                            if (statementMethod.getName().equals("executeQuery")) {
+                                                executions.incrementAndGet();
+                                                SQLException failure = failureSupplier.get();
+                                                if (failure != null) {
+                                                    throw failure;
+                                                }
+                                            }
+                                            try {
+                                                return statementMethod.invoke(
+                                                        statement, statementArgs);
+                                            } catch (InvocationTargetException e) {
+                                                throw e.getCause();
+                                            }
+                                        });
+                            } catch (InvocationTargetException e) {
+                                throw e.getCause();
+                            }
+                        });
     }
 
     private static Serializable[] parameters(Serializable... values) {

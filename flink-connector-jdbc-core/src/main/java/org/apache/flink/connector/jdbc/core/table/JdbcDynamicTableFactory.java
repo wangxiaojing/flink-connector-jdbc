@@ -69,6 +69,7 @@ import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SC
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_DISCOVERY_MAX_RETRIES;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_DISCOVERY_RETRY_BACKOFF;
+import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_DISCOVERY_TOTAL_TIMEOUT;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_LOWER_BOUND;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_MAX_SPLITS;
 import static org.apache.flink.connector.jdbc.core.table.JdbcConnectorOptions.SCAN_PARTITION_NUM;
@@ -214,7 +215,9 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
                         .setPartitionDiscoveryRetryBackoff(
                                 readableConfig.get(SCAN_PARTITION_DISCOVERY_RETRY_BACKOFF))
                         .setPartitionDiscoveryQueryTimeout(
-                                readableConfig.get(SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT));
+                                readableConfig.get(SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT))
+                        .setPartitionDiscoveryTotalTimeout(
+                                readableConfig.get(SCAN_PARTITION_DISCOVERY_TOTAL_TIMEOUT));
             } else {
                 builder.setPartitionLowerBound(readableConfig.get(SCAN_PARTITION_LOWER_BOUND));
                 builder.setPartitionUpperBound(readableConfig.get(SCAN_PARTITION_UPPER_BOUND));
@@ -298,6 +301,7 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
         optionalOptions.add(SCAN_PARTITION_DISCOVERY_MAX_RETRIES);
         optionalOptions.add(SCAN_PARTITION_DISCOVERY_RETRY_BACKOFF);
         optionalOptions.add(SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT);
+        optionalOptions.add(SCAN_PARTITION_DISCOVERY_TOTAL_TIMEOUT);
         optionalOptions.add(SCAN_PARTITION_LOWER_BOUND);
         optionalOptions.add(SCAN_PARTITION_UPPER_BOUND);
         optionalOptions.add(SCAN_PARTITION_NUM);
@@ -383,6 +387,11 @@ public class JdbcDynamicTableFactory implements DynamicTableSourceFactory, Dynam
                     || config.get(SCAN_PARTITION_DISCOVERY_QUERY_TIMEOUT).isNegative()) {
                 throw new IllegalArgumentException(
                         "scan.partition.discovery.query-timeout must be greater than zero.");
+            }
+            if (config.get(SCAN_PARTITION_DISCOVERY_TOTAL_TIMEOUT).isZero()
+                    || config.get(SCAN_PARTITION_DISCOVERY_TOTAL_TIMEOUT).isNegative()) {
+                throw new IllegalArgumentException(
+                        "scan.partition.discovery.total-timeout must be greater than zero.");
             }
             JdbcDialect dialect =
                     JdbcFactoryLoader.loadDialect(

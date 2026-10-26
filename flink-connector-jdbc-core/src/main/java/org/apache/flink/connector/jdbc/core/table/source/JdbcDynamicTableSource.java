@@ -165,6 +165,7 @@ public class JdbcDynamicTableSource
                                     readOptions.getPartitionDiscoveryMaxRetries(),
                                     readOptions.getPartitionDiscoveryRetryBackoff(),
                                     readOptions.getPartitionDiscoveryQueryTimeout(),
+                                    readOptions.getPartitionDiscoveryTotalTimeout(),
                                     resolvedPredicates,
                                     pushdownParams));
                     predicates.add(

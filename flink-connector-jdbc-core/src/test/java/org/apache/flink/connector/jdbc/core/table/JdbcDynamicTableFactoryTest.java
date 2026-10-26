@@ -404,6 +404,13 @@ class JdbcDynamicTableFactoryTest {
         assertThatThrownBy(() -> createTableSource(SCHEMA, invalidTimeout))
                 .hasStackTraceContaining(
                         "scan.partition.discovery.query-timeout must be greater than zero");
+
+        properties = dynamicKeysetOptions();
+        properties.put("scan.partition.discovery.total-timeout", "0s");
+        Map<String, String> invalidTotalTimeout = properties;
+        assertThatThrownBy(() -> createTableSource(SCHEMA, invalidTotalTimeout))
+                .hasStackTraceContaining(
+                        "scan.partition.discovery.total-timeout must be greater than zero");
     }
 
     @Test

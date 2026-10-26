@@ -253,6 +253,14 @@ Connector Options
       <td>JDBC query timeout applied to each <code>dynamic-keyset</code> discovery query.</td>
     </tr>
     <tr>
+      <td><h5>scan.partition.discovery.total-timeout</h5></td>
+      <td>optional</td>
+      <td>no</td>
+      <td style="word-wrap: break-word;">30min</td>
+      <td>Duration</td>
+      <td>Maximum total time for <code>dynamic-keyset</code> discovery, including queries, retries, and retry backoff.</td>
+    </tr>
+    <tr>
       <td><h5>scan.fetch-size</h5></td>
       <td>optional</td>
       <td>yes</td>
@@ -452,7 +460,8 @@ CREATE TABLE orders_snapshot (
   'scan.partition.max-splits' = '100000',
   'scan.partition.discovery.max-retries' = '3',
   'scan.partition.discovery.retry-backoff' = '1s',
-  'scan.partition.discovery.query-timeout' = '5min'
+  'scan.partition.discovery.query-timeout' = '5min',
+  'scan.partition.discovery.total-timeout' = '30min'
 );
 ```
 
@@ -466,7 +475,9 @@ Requirements and limitations:
 - `scan.partition.chunk-size` controls boundary sampling, not the final Flink parallelism. The number of discovered ranges controls the number of input splits. Duplicate key values can make a range larger than the configured chunk size.
 - A query with a pushed-down global `LIMIT` runs as one input split so that the limit remains global and exact.
 - Boundary discovery is performed before the data splits run. A small chunk size creates more database queries and more Flink splits.
-- Discovery reuses one prepared statement for each of the minimum, boundary, and next-distinct-value queries. Failed queries are retried using the configured backoff and timeout. Progress is logged every 1,000 discovered splits.
+- Discovery reuses one prepared statement for each of the minimum, boundary, and next-distinct-value queries. Transient statement failures are retried on the current connection. Recoverable connection failures, JDBC connection exceptions, and SQL states in class `08` close the failed connection, reconnect, and retry the current boundary without restarting discovery. Other SQL failures fail immediately. The retry limit applies to each discovery query.
+- `scan.partition.discovery.query-timeout` limits each JDBC query. `scan.partition.discovery.total-timeout` limits the whole discovery phase, including retry backoff. JDBC query timeouts use the driver's second-level timeout and cancellation behavior, so enforcement during a running query depends on the driver.
+- Progress is logged every 1,000 discovered splits.
 - `scan.partition.max-splits` bounds the eager split list held during planning. Increase the chunk size first when this guard is reached; raising the limit also increases JobManager memory and scheduling load.
 - Concurrent inserts, updates, or deletes can move rows across discovered ranges. This source does not establish one database-wide repeatable-read snapshot across connections. Run against a quiescent table, a database snapshot/read replica, or accept best-effort snapshot consistency.
 - On recovery, a bounded input split can be read again. A downstream append sink must tolerate duplicates; an idempotent/upsert sink should use a stable primary key.

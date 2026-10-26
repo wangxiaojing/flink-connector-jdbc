@@ -146,6 +146,14 @@ public class JdbcConnectorOptions {
                     .withDescription(
                             "The JDBC query timeout for each dynamic-keyset discovery query.");
 
+    public static final ConfigOption<Duration> SCAN_PARTITION_DISCOVERY_TOTAL_TIMEOUT =
+            ConfigOptions.key("scan.partition.discovery.total-timeout")
+                    .durationType()
+                    .defaultValue(Duration.ofMinutes(30))
+                    .withDescription(
+                            "The maximum total time allowed for dynamic-keyset partition discovery, "
+                                    + "including queries, retries, and retry backoff.");
+
     public static final ConfigOption<Integer> SCAN_FETCH_SIZE =
             ConfigOptions.key("scan.fetch-size")
                     .intType()

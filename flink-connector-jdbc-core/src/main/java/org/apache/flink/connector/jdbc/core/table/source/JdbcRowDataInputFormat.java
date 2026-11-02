@@ -42,6 +42,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.sql.Array;
 import java.sql.Connection;
 import java.sql.Date;
@@ -177,6 +178,11 @@ public class JdbcRowDataInputFormat extends RichInputFormat<RowData, InputSplit>
                         statement.setBoolean(i + 1, (Boolean) param);
                     } else if (param instanceof Float) {
                         statement.setFloat(i + 1, (Float) param);
+                    } else if (param instanceof BigInteger) {
+                        // MySQL BIGINT UNSIGNED is exposed by the JDBC driver as BigInteger.
+                        // Preserve its full 0..2^64-1 range by binding it as DECIMAL(20, 0)
+                        // instead of narrowing it to a signed long.
+                        statement.setBigDecimal(i + 1, new BigDecimal((BigInteger) param));
                     } else if (param instanceof BigDecimal) {
                         statement.setBigDecimal(i + 1, (BigDecimal) param);
                     } else if (param instanceof Byte) {

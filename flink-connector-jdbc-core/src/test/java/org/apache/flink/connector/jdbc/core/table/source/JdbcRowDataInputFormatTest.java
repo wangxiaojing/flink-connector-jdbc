@@ -39,6 +39,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.math.BigInteger;
 import java.sql.ResultSet;
 import java.util.Arrays;
 
@@ -335,6 +336,31 @@ class JdbcRowDataInputFormatTest extends JdbcDataTestBase {
         verifySplit(splits[0], TEST_DATA[3].id);
         verifySplit(splits[1], TEST_DATA[0].id + TEST_DATA[1].id);
 
+        inputFormat.closeInputFormat();
+    }
+
+    @Test
+    void testJdbcInputFormatWithBigIntegerParameters() throws IOException {
+        Serializable[][] queryParameters =
+                new Serializable[][] {
+                    {BigInteger.valueOf(TEST_DATA[0].id), BigInteger.valueOf(TEST_DATA[0].id)}
+                };
+        JdbcParameterValuesProvider paramProvider =
+                new JdbcGenericParameterValuesProvider(queryParameters);
+        inputFormat =
+                JdbcRowDataInputFormat.builder()
+                        .setDrivername(getMetadata().getDriverClass())
+                        .setDBUrl(getMetadata().getJdbcUrl())
+                        .setQuery(SELECT_ALL_BOOKS_SPLIT_BY_ID)
+                        .setParametersProvider(paramProvider)
+                        .setResultSetType(ResultSet.TYPE_SCROLL_INSENSITIVE)
+                        .setRowConverter(dialect.getRowConverter(rowType))
+                        .build();
+
+        inputFormat.openInputFormat();
+        InputSplit[] splits = inputFormat.createInputSplits(1);
+        assertThat(splits).hasSize(1);
+        verifySplit(splits[0], TEST_DATA[0].id);
         inputFormat.closeInputFormat();
     }
 
